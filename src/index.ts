@@ -1,9 +1,8 @@
-#!/usr/bin/env node
-
 import { execSync } from "child_process";
 import fs from "fs-extra";
 import inquirer from "inquirer";
 import path from "path";
+import { checkNext } from "./functions/checkNext";
 
 // Fonction principale
 const init = async () => {
@@ -33,11 +32,8 @@ const init = async () => {
   const projectPath = path.join(process.cwd(), projectName);
   process.chdir(projectPath);
 
-  let nextInstalled = false;
-  try {
-    require.resolve("next");
-    nextInstalled = true;
-  } catch {
+  const nextInstalled = await checkNext();
+  if (!nextInstalled) {
     console.log("❌ Next.js non détecté. Installez-le avant de continuer.");
     process.exit(1);
   }
