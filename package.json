@@ -4,11 +4,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc"
   },
   "bin": {
-    "next-auth-automatic-setup": "./dist/index.js"
+    "next-auth-automatic-setup": "dist/index.js"
   },
   "keywords": [],
   "author": "Lucas PORRINI",

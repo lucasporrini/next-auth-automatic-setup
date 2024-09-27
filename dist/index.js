@@ -1,19 +1,14 @@
 #!/usr/bin/env node
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-const child_process_1 = require("child_process");
-const fs_extra_1 = __importDefault(require("fs-extra"));
-const inquirer_1 = __importDefault(require("inquirer"));
-const path_1 = __importDefault(require("path"));
-const checkNext_1 = require("./functions/checkNext");
+import { execSync } from "child_process";
+import fs from "fs-extra";
+import inquirer from "inquirer";
+import path from "path";
+import { checkNext } from "./functions/checkNext";
 // Fonction principale
 const init = async () => {
     console.log("🚀 Setting up authentication for your Next.js project...");
     // Demander le nom du projet et le type d'authentification
-    const { projectName, authType } = await inquirer_1.default.prompt([
+    const { projectName, authType } = await inquirer.prompt([
         {
             type: "input",
             name: "projectName",
@@ -32,9 +27,9 @@ const init = async () => {
         },
     ]);
     // Détecter ou installer Next.js
-    const projectPath = path_1.default.join(process.cwd(), projectName);
+    const projectPath = path.join(process.cwd(), projectName);
     process.chdir(projectPath);
-    const nextInstalled = await (0, checkNext_1.checkNext)();
+    const nextInstalled = await checkNext();
     if (!nextInstalled) {
         console.log("❌ Next.js non détecté. Installez-le avant de continuer.");
         process.exit(1);
@@ -43,14 +38,14 @@ const init = async () => {
     const checkRouterType = () => {
         let baseDir = process.cwd();
         // Vérifie si le dossier src existe
-        const srcDirExists = fs_extra_1.default.existsSync(path_1.default.join(baseDir, "src"));
+        const srcDirExists = fs.existsSync(path.join(baseDir, "src"));
         if (srcDirExists) {
-            baseDir = path_1.default.join(baseDir, "src");
+            baseDir = path.join(baseDir, "src");
         }
         // Vérifie si le dossier 'app' existe pour l'App Router
-        const appDirExists = fs_extra_1.default.existsSync(path_1.default.join(baseDir, "app"));
+        const appDirExists = fs.existsSync(path.join(baseDir, "app"));
         // Vérifie si le dossier 'pages' existe pour le Pages Router
-        const pagesDirExists = fs_extra_1.default.existsSync(path_1.default.join(baseDir, "pages"));
+        const pagesDirExists = fs.existsSync(path.join(baseDir, "pages"));
         if (appDirExists) {
             console.log("✅ App Router détecté.");
             return { router: "app-router", baseDir };
@@ -69,23 +64,23 @@ const init = async () => {
     // Installer les packages nécessaires en fonction du type d'authentification
     if (authType.includes("Providers (Google, GitHub, etc.)")) {
         console.log("Installation de NextAuth.js...");
-        (0, child_process_1.execSync)("npm install next-auth@5.0.0-beta.18", { stdio: "inherit" });
+        execSync("npm install next-auth@5.0.0-beta.18", { stdio: "inherit" });
     }
     if (authType.includes("Magic Link")) {
         console.log("Installation de NextAuth Email...");
-        (0, child_process_1.execSync)("npm install next-auth-email", { stdio: "inherit" });
+        execSync("npm install next-auth-email", { stdio: "inherit" });
     }
     if (authType.includes("Credentials")) {
         console.log("Installation de bcryptjs...");
-        (0, child_process_1.execSync)("npm install bcryptjs", { stdio: "inherit" });
+        execSync("npm install bcryptjs", { stdio: "inherit" });
     }
     // Créer les fichiers de configuration
     console.log("Création des fichiers de configuration...");
     // Chemins des fichiers selon le type de router et la présence de "src"
     const apiPath = routerType === "app-router"
-        ? path_1.default.join(baseDir, "app/api/auth/[...nextauth]/route.ts")
-        : path_1.default.join(baseDir, "pages/api/auth/[...nextauth].ts");
-    const authFilePath = path_1.default.join(baseDir, "auth.ts");
+        ? path.join(baseDir, "app/api/auth/[...nextauth]/route.ts")
+        : path.join(baseDir, "pages/api/auth/[...nextauth].ts");
+    const authFilePath = path.join(baseDir, "auth.ts");
     // Créer le fichier "auth.ts" à la racine
     const authConfigContent = `
 import NextAuth, { NextAuthConfig } from "next-auth";
@@ -161,7 +156,7 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
   },
 } satisfies NextAuthConfig);
 `;
-    fs_extra_1.default.outputFileSync(authFilePath, authConfigContent);
+    fs.outputFileSync(authFilePath, authConfigContent);
     // Créer le fichier selon le type de Router
     const apiContent = routerType === "app-router"
         ? `import { handlers } from "@/auth";
@@ -171,7 +166,7 @@ export const { GET, POST } = handlers;`
 import { auth } from "@/auth";
 
 export default NextAuth(auth);`;
-    fs_extra_1.default.outputFileSync(apiPath, apiContent);
+    fs.outputFileSync(apiPath, apiContent);
     console.log("✅ Configuration complète !");
     // Afficher les dernières instructions
     console.log(`\n👉 Vous pouvez démarrer votre projet avec : \n\nnpm run dev`);
