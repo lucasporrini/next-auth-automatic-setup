@@ -3,7 +3,46 @@ import { execSync } from "child_process";
 import fs from "fs-extra";
 import inquirer from "inquirer";
 import path from "path";
-import { checkNext } from "./functions/checkNext";
+
+// Fonction pour rechercher récursivement un dossier spécifique avec vérification du dossier src
+const findDirectoryWithSrc = (
+  baseDir: string,
+  dirName: string
+): string | null => {
+  // Vérifier d'abord dans le dossier courant
+  const mainDir = findDirectoryRecursively(baseDir, dirName);
+  if (mainDir) return mainDir;
+
+  // Si pas trouvé, vérifier dans le dossier "src"
+  const srcDir = path.join(baseDir, "src");
+  if (fs.existsSync(srcDir)) {
+    return findDirectoryRecursively(srcDir, dirName);
+  }
+
+  return null;
+};
+
+// Fonction pour rechercher récursivement un dossier spécifique
+const findDirectoryRecursively = (
+  baseDir: string,
+  dirName: string
+): string | null => {
+  const dirs = fs.readdirSync(baseDir, { withFileTypes: true });
+
+  for (const dir of dirs) {
+    if (dir.isDirectory() && dir.name !== ".next") {
+      const currentPath = path.join(baseDir, dir.name);
+      if (dir.name === dirName) {
+        return currentPath;
+      }
+
+      // Recherche récursive dans les sous-dossiers
+      const foundDir = findDirectoryRecursively(currentPath, dirName);
+      if (foundDir) return foundDir;
+    }
+  }
+  return null;
+};
 
 // Fonction principale
 const init = async () => {
@@ -43,24 +82,16 @@ const init = async () => {
   const checkRouterType = () => {
     let baseDir = process.cwd();
 
-    // Vérifie si le dossier src existe
-    const srcDirExists = fs.existsSync(path.join(baseDir, "src"));
-    if (srcDirExists) {
-      baseDir = path.join(baseDir, "src");
-    }
+    // Chercher dans le dossier courant ou dans "src"
+    const appDirPath = findDirectoryWithSrc(baseDir, "app");
+    const pagesDirPath = findDirectoryWithSrc(baseDir, "pages");
 
-    // Vérifie si le dossier 'app' existe pour l'App Router
-    const appDirExists = fs.existsSync(path.join(baseDir, "app"));
-
-    // Vérifie si le dossier 'pages' existe pour le Pages Router
-    const pagesDirExists = fs.existsSync(path.join(baseDir, "pages"));
-
-    if (appDirExists) {
+    if (appDirPath) {
       console.log("✅ App Router détecté.");
-      return { router: "app-router", baseDir };
-    } else if (pagesDirExists) {
+      return { router: "app-router", baseDir: appDirPath };
+    } else if (pagesDirPath) {
       console.log("✅ Pages Router détecté.");
-      return { router: "pages-router", baseDir };
+      return { router: "pages-router", baseDir: pagesDirPath };
     } else {
       console.log(
         "❌ Aucun router détecté. Assurez-vous d'avoir un projet Next.js valide."
@@ -91,15 +122,20 @@ const init = async () => {
   // Créer les fichiers de configuration
   console.log("Création des fichiers de configuration...");
 
-  // Chemins des fichiers selon le type de router et la présence de "src"
-  const apiPath =
+  // Chemins des fichiers selon le type de router
+  const apiDirPath =
     routerType === "app-router"
-      ? path.join(baseDir, "app/api/auth/[...nextauth]/route.ts")
-      : path.join(baseDir, "pages/api/auth/[...nextauth].ts");
+      ? path.join(baseDir, "api/auth/[...nextauth]")
+      : path.join(baseDir, "pages/api/auth/[...nextauth]");
 
-  const authFilePath = path.join(baseDir, "auth.ts");
+  const apiFilePath =
+    routerType === "app-router"
+      ? path.join(apiDirPath, "route.ts")
+      : path.join(apiDirPath, "[...nextauth].ts");
 
-  // Créer le fichier "auth.ts" à la racine
+  const authFilePath = path.join(process.cwd(), "auth.ts");
+
+  // Créer le fichier auth.ts
   const authConfigContent = `
 import NextAuth, { NextAuthConfig } from "next-auth";
 import bcrypt from "bcryptjs";
@@ -137,12 +173,10 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
       authType.includes("Credentials")
         ? `Credentials({
       async authorize(credentials) {
-        // Implement your own schema here
         const validatedFields = YourSchemaHere.safeParse(credentials);
         if (validatedFields.success) {
           const { email, password } = validatedFields.data;
-          // Use your own logic to get the user by email here
-          const user = await getUserByEmail(email)
+          const user = await getUserByEmail(email);
           if (!user || !user.password) return null;
           const passwordsMatch = await bcrypt.compare(password, user.password);
           if (passwordsMatch) return user;
@@ -183,20 +217,36 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
 } satisfies NextAuthConfig);
 `;
 
+  // Écriture du fichier auth.ts
   fs.outputFileSync(authFilePath, authConfigContent);
 
-  // Créer le fichier selon le type de Router
-  const apiContent =
-    routerType === "app-router"
-      ? `import { handlers } from "@/auth";
+  // Créer le répertoire API de manière sûre avec fs.ensureDirSync
+  console.log("Création du répertoire pour l'API NextAuth...");
+
+  try {
+    // Créer le répertoire API (et les dossiers parents s'ils n'existent pas)
+    fs.ensureDirSync(apiDirPath);
+
+    // Contenu du fichier route/api/auth en fonction du router
+    const apiContent =
+      routerType === "app-router"
+        ? `import { handlers } from "@/auth";
 
 export const { GET, POST } = handlers;`
-      : `import NextAuth from "next-auth";
+        : `import NextAuth from "next-auth";
 import { auth } from "@/auth";
 
 export default NextAuth(auth);`;
 
-  fs.outputFileSync(apiPath, apiContent);
+    // Créer le fichier api/auth/[...nextauth]
+    fs.outputFileSync(apiFilePath, apiContent);
+
+    console.log(
+      `✅ Le répertoire API et le fichier ${apiFilePath} ont été créés.`
+    );
+  } catch (error) {
+    console.error("❌ Erreur lors de la création du répertoire API :", error);
+  }
 
   console.log("✅ Configuration complète !");
 
@@ -204,5 +254,14 @@ export default NextAuth(auth);`;
   console.log(`\n👉 Vous pouvez démarrer votre projet avec : \n\nnpm run dev`);
 };
 
-// Exécuter la fonction principale
+// Fonction pour vérifier si Next.js est installé
+const checkNext = async () => {
+  try {
+    execSync("npx next --version", { stdio: "ignore" });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
 init().catch((err) => console.error("❌ Error:", err));
