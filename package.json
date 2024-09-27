@@ -1,7 +1,7 @@
 {
   "name": "next-auth-automatic-setup",
   "version": "1.0.13",
-  "main": "index.js",
+  "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc"
