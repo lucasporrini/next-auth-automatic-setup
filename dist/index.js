@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -8,6 +7,7 @@ const child_process_1 = require("child_process");
 const fs_extra_1 = __importDefault(require("fs-extra"));
 const inquirer_1 = __importDefault(require("inquirer"));
 const path_1 = __importDefault(require("path"));
+const checkNext_1 = require("./functions/checkNext");
 // Fonction principale
 const init = async () => {
     console.log("🚀 Setting up authentication for your Next.js project...");
@@ -33,12 +33,8 @@ const init = async () => {
     // Détecter ou installer Next.js
     const projectPath = path_1.default.join(process.cwd(), projectName);
     process.chdir(projectPath);
-    let nextInstalled = false;
-    try {
-        require.resolve("next");
-        nextInstalled = true;
-    }
-    catch (_a) {
+    const nextInstalled = await (0, checkNext_1.checkNext)();
+    if (!nextInstalled) {
         console.log("❌ Next.js non détecté. Installez-le avant de continuer.");
         process.exit(1);
     }
