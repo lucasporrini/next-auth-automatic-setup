@@ -7,7 +7,7 @@
     "build": "tsc"
   },
   "bin": {
-    "create-next-auth": "dist/index.js"
+    "next-auth-automatic-setup": "./dist/index.js"
   },
   "keywords": [],
   "author": "Lucas PORRINI",
