@@ -36,8 +36,8 @@ const findDirectoryRecursively = (baseDir, dirName) => {
 // Fonction principale
 const init = async () => {
     console.log("🚀 Setting up authentication for your Next.js project...");
-    // Demander le nom du projet et le type d'authentification
-    const { projectName, authType } = await inquirer.prompt([
+    // Configuration étendue
+    const { projectName, authType, authStrategy, database } = await inquirer.prompt([
         {
             type: "input",
             name: "projectName",
@@ -52,7 +52,21 @@ const init = async () => {
                 "Providers (Google, GitHub, etc.)",
                 "Credentials",
                 "Magic Link",
+                "Email/Password",
             ],
+        },
+        {
+            type: "list",
+            name: "authStrategy",
+            message: "Choisir la stratégie d'authentification :",
+            choices: ["JWT", "Database Session"],
+        },
+        {
+            type: "list",
+            name: "database",
+            message: "Choisir la base de données (pour Database Session) :",
+            choices: ["MongoDB", "PostgreSQL", "MySQL", "None"],
+            when: (answers) => answers.authStrategy === "Database Session",
         },
     ]);
     // Détecter ou installer Next.js
@@ -62,6 +76,68 @@ const init = async () => {
     if (!nextInstalled) {
         console.log("❌ Next.js non détecté. Installez-le avant de continuer.");
         process.exit(1);
+    }
+    // Vérifier la version de Next.js
+    const getNextVersion = () => {
+        const packageJsonPath = path.join(process.cwd(), "package.json");
+        if (!fs.existsSync(packageJsonPath)) {
+            console.log("❌ package.json non trouvé. Êtes-vous dans un projet Next.js ?");
+            process.exit(1);
+        }
+        try {
+            const packageJson = fs.readJsonSync(packageJsonPath);
+            const version = packageJson.dependencies?.next || packageJson.devDependencies?.next;
+            if (!version) {
+                console.log("❌ Next.js n'est pas installé dans le package.json");
+                process.exit(1);
+            }
+            return version;
+        }
+        catch (error) {
+            console.log("❌ Erreur lors de la lecture du package.json");
+            console.error(error);
+            process.exit(1);
+        }
+    };
+    const nextVersion = getNextVersion();
+    const isNext13OrHigher = nextVersion
+        ? parseInt(nextVersion.split(".")[0]) >= 13
+        : false;
+    const nextMajorVersion = parseInt(nextVersion.split(".")[0]);
+    checkCompatibility(nextMajorVersion);
+    // Installation des dépendances en fonction des choix
+    const installDependencies = async () => {
+        try {
+            // Vérifier la version de Next.js et installer la version appropriée de NextAuth
+            const nextAuthVersion = "5.0.0-beta.18";
+            const dependencies = [
+                `next-auth@${nextAuthVersion}`,
+                authStrategy === "Database Session" ? "@auth/core" : "",
+                database === "MongoDB" ? "mongodb" : "",
+                database === "PostgreSQL" ? "@prisma/client prisma" : "",
+                database === "MySQL" ? "@prisma/client prisma" : "",
+                authType.includes("Credentials") ? "bcryptjs @types/bcryptjs" : "",
+                "zod",
+                "bcryptjs",
+            ].filter(Boolean);
+            console.log("📦 Installation des dépendances...");
+            // Ajouter --legacy-peer-deps pour éviter les conflits
+            execSync(`npm install ${dependencies.join(" ")} --legacy-peer-deps`, {
+                stdio: "inherit",
+                env: { ...process.env, FORCE_COLOR: "1" }, // Pour garder la coloration dans la console
+            });
+        }
+        catch (error) {
+            console.error("❌ Erreur lors de l'installation des dépendances :", error);
+            console.log("💡 Essayez d'installer manuellement avec : npm install next-auth --legacy-peer-deps");
+            process.exit(1);
+        }
+    };
+    await installDependencies();
+    // Générer la configuration de base de données
+    if (authStrategy === "Database Session") {
+        const dbConfig = generateDatabaseConfig(database);
+        fs.outputFileSync(path.join(process.cwd(), "lib/db.ts"), dbConfig);
     }
     // Vérification du type de router (Pages Router ou App Router)
     const checkRouterType = () => {
@@ -84,19 +160,6 @@ const init = async () => {
     };
     // Appeler la fonction pour déterminer quel router est utilisé
     const { router: routerType, baseDir } = checkRouterType();
-    // Installer les packages nécessaires en fonction du type d'authentification
-    if (authType.includes("Providers (Google, GitHub, etc.)")) {
-        console.log("Installation de NextAuth.js...");
-        execSync("npm install next-auth@5.0.0-beta.18", { stdio: "inherit" });
-    }
-    if (authType.includes("Magic Link")) {
-        console.log("Installation de NextAuth Email...");
-        execSync("npm install next-auth-email", { stdio: "inherit" });
-    }
-    if (authType.includes("Credentials")) {
-        console.log("Installation de bcryptjs...");
-        execSync("npm install bcryptjs", { stdio: "inherit" });
-    }
     // Créer les fichiers de configuration
     console.log("Création des fichiers de configuration...");
     // Chemins des fichiers selon le type de router
@@ -203,9 +266,69 @@ export default NextAuth(auth);`;
     catch (error) {
         console.error("❌ Erreur lors de la création du répertoire API :", error);
     }
+    // Générer les composants UI
+    const uiComponents = generateUIComponents(routerType, authType);
+    Object.entries(uiComponents).forEach(([fileName, content]) => {
+        fs.outputFileSync(path.join(process.cwd(), "components/auth", fileName), content);
+    });
+    // Générer le schema Prisma si nécessaire
+    if (database === "PostgreSQL" || database === "MySQL") {
+        console.log("📝 Génération du schema Prisma...");
+        const prismaSchema = generatePrismaSchema(database);
+        fs.outputFileSync(path.join(process.cwd(), "prisma/schema.prisma"), prismaSchema);
+        // Initialiser Prisma
+        console.log("🔧 Initialisation de Prisma...");
+        try {
+            execSync("npx prisma generate", { stdio: "inherit" });
+        }
+        catch (error) {
+            console.error("❌ Erreur lors de l'initialisation de Prisma:", error);
+        }
+    }
+    // Ajouter cette fonction pour générer le fichier .env
+    const generateEnvFile = () => {
+        const envContent = `
+# Généré par next-auth-automatic-setup
+AUTH_SECRET="${Math.random().toString(36).substring(2, 15) +
+            Math.random().toString(36).substring(2, 15)}"
+# Ajoutez vos clés d'API ici
+# GOOGLE_CLIENT_ID=""
+# GOOGLE_CLIENT_SECRET=""
+# DATABASE_URL=""
+`;
+        fs.outputFileSync(path.join(process.cwd(), ".env"), envContent);
+        // Ajouter .env au .gitignore s'il existe
+        const gitignorePath = path.join(process.cwd(), ".gitignore");
+        if (fs.existsSync(gitignorePath)) {
+            const gitignoreContent = fs.readFileSync(gitignorePath, "utf-8");
+            if (!gitignoreContent.includes(".env")) {
+                fs.appendFileSync(gitignorePath, "\n.env\n");
+            }
+        }
+    };
+    // Générer le fichier .env avec le secret
+    console.log("📝 Génération du fichier .env...");
+    generateEnvFile();
+    // Mettre à jour la partie qui gère le Provider
+    if (routerType === "app-router") {
+        console.log("📝 Mise à jour du layout...");
+        updateLayoutFile(baseDir);
+    }
+    else {
+        console.log("📝 Génération du Provider...");
+        const providerContent = generateProviderComponent(routerType);
+        fs.outputFileSync(path.join(process.cwd(), "pages/_app.tsx"), providerContent);
+    }
+    // Si c'est un App Router, modifier le layout.tsx pour inclure le Provider
+    if (routerType === "app-router") {
+        updateLayoutFile(baseDir);
+    }
     console.log("✅ Configuration complète !");
     // Afficher les dernières instructions
     console.log(`\n👉 Vous pouvez démarrer votre projet avec : \n\nnpm run dev`);
+    // À la fin, ajouter des instructions pour l'utilisateur
+    console.log("\n🔑 Un fichier .env a été créé avec un secret généré automatiquement");
+    console.log("👉 N'oubliez pas d'ajouter vos propres clés d'API dans le fichier .env");
 };
 // Fonction pour vérifier si Next.js est installé
 const checkNext = async () => {
@@ -215,6 +338,220 @@ const checkNext = async () => {
     }
     catch (error) {
         return false;
+    }
+};
+// Fonction pour générer la configuration de la base de données
+const generateDatabaseConfig = (database) => {
+    switch (database) {
+        case "MongoDB":
+            return `
+import { MongoClient } from 'mongodb';
+
+if (!process.env.MONGODB_URI) {
+  throw new Error('Invalid/Missing environment variable: "MONGODB_URI"');
+}
+
+const uri = process.env.MONGODB_URI;
+const options = {};
+
+let client;
+let clientPromise: Promise<MongoClient>;
+
+if (process.env.NODE_ENV === "development") {
+  if (!global._mongoClientPromise) {
+    client = new MongoClient(uri, options);
+    global._mongoClientPromise = client.connect();
+  }
+  clientPromise = global._mongoClientPromise;
+} else {
+  client = new MongoClient(uri, options);
+  clientPromise = client.connect();
+}
+
+export default clientPromise;
+`;
+        case "PostgreSQL":
+        case "MySQL":
+            return `
+import { PrismaClient } from "@prisma/client";
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
+
+export default prisma;
+`;
+        default:
+            return "";
+    }
+};
+// Fonction pour générer les composants UI
+const generateUIComponents = (routerType, authType) => {
+    const components = {
+        "LoginButton.tsx": `
+import { signIn, signOut, useSession } from "next-auth/react";
+
+export default function LoginButton() {
+  const { data: session } = useSession();
+
+  if (session) {
+    return (
+      <button onClick={() => signOut()}>
+        Sign out
+      </button>
+    );
+  }
+  return (
+    <button onClick={() => signIn()}>
+      Sign in
+    </button>
+  );
+}
+`,
+    };
+    return components;
+};
+const checkCompatibility = (nextMajorVersion) => {
+    if (nextMajorVersion < 13) {
+        console.log("❌ Ce package nécessite Next.js 13 ou supérieur");
+        process.exit(1);
+    }
+    if (nextMajorVersion >= 15) {
+        console.log("⚠️ Next.js 15 détecté. Certaines fonctionnalités pourraient ne pas être disponibles.");
+        console.log("💡 Nous recommandons d'utiliser Next.js 13 ou 14 pour une meilleure compatibilité.");
+    }
+};
+const generatePrismaSchema = (database) => {
+    const dbProvider = database === "PostgreSQL" ? "postgresql" : "mysql";
+    return `
+datasource db {
+  provider = "${dbProvider}"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+`;
+};
+const generateProviderComponent = (routerType) => {
+    if (routerType === "app-router") {
+        return `
+'use client';
+
+import { SessionProvider } from "next-auth/react";
+
+export default function Provider({ children, session }: { 
+  children: React.ReactNode;
+  session: any;
+}) {
+  return <SessionProvider session={session}>{children}</SessionProvider>;
+}
+`;
+    }
+    else {
+        return `
+import { SessionProvider } from "next-auth/react";
+import type { AppProps } from "next/app";
+
+export default function App({
+  Component,
+  pageProps: { session, ...pageProps },
+}: AppProps) {
+  return (
+    <SessionProvider session={session}>
+      <Component {...pageProps} />
+    </SessionProvider>
+  );
+}
+`;
+    }
+};
+// Modifier la fonction qui gère le layout pour l'App Router
+const updateLayoutFile = (baseDir) => {
+    const layoutPath = path.join(baseDir, "layout.tsx");
+    if (fs.existsSync(layoutPath)) {
+        let layoutContent = fs.readFileSync(layoutPath, "utf-8");
+        // Si le Provider n'est pas déjà inclus
+        if (!layoutContent.includes("Provider")) {
+            // Ajouter les imports nécessaires
+            const imports = `import { headers } from 'next/headers';
+import Provider from "@/app/providers";
+import { auth } from "@/auth";`;
+            // Remplacer l'import existant ou ajouter au début
+            if (layoutContent.includes("import")) {
+                layoutContent = layoutContent.replace(/import.*?;/, `${imports}`);
+            }
+            else {
+                layoutContent = `${imports}\n\n${layoutContent}`;
+            }
+            // Modifier la fonction RootLayout
+            layoutContent = layoutContent.replace(/export default function RootLayout[^{]*{/, `export default async function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const session = await auth();`);
+            // Wrapper le children avec le Provider
+            layoutContent = layoutContent.replace(/<body[^>]*>(.*?)<\/body>/s, `<body>
+          <Provider session={session}>
+            $1
+          </Provider>
+        </body>`);
+        }
+        fs.writeFileSync(layoutPath, layoutContent);
     }
 };
 init().catch((err) => console.error("❌ Error:", err));
